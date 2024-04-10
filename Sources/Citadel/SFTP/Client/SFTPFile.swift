@@ -1,5 +1,6 @@
 import NIO
 import Logging
+import Foundation
 
 /// A "handle" for accessing a file that has been successfully opened on an SFTP server. File handles support
 /// reading (if opened with read access) and writing/appending (if opened with write/append access).
@@ -132,18 +133,33 @@ public final class SFTPFile {
     /// Write the given data to the file, starting at the provided offset. If the offset is past the current end of the
     /// file, the behavior is server-dependent, but it is safest to assume that this is not permitted. The offset is
     /// ignored if the file was opened with the `.append` flag.
-    public func write(_ data: ByteBuffer, at offset: UInt64 = 0) async throws -> Void {
+    /// - Parameters:
+    ///   - data: The data to write to disk.
+    ///   - offset: The offset to start reading the data at.
+    ///   - progress: A progress object that will be updated as the file is uploaded.
+    ///   - chunkSize: The size in bytes of each chunk of data. Larger chunks will improve performance with large files.
+    public func write(_ data: ByteBuffer, at offset: UInt64 = 0, progress: Progress? = nil, chunkSize: Int = 32_000) async throws {
         guard self.isActive else { throw SFTPError.fileHandleInvalid }
-        
+
+
+
+        let totalBytesToUpload = data.readableBytes
+
+        progress?.totalUnitCount = Int64(totalBytesToUpload)
+
         var data = data
-        let sliceLength = 32_000 // https://github.com/apple/swift-nio-ssh/issues/99
-        
+        let sliceLength = chunkSize // https://github.com/apple/swift-nio-ssh/issues/99
+
         while data.readableBytes > 0, let slice = data.readSlice(length: Swift.min(sliceLength, data.readableBytes)) {
             let result = try await self.client.sendRequest(.write(.init(
                 requestId: self.client.allocateRequestId(),
                 handle: self.handle, offset: offset + UInt64(data.readerIndex) - UInt64(slice.readableBytes), data: slice
             )))
-            
+
+            // Update progress.
+            let completed = totalBytesToUpload - data.readableBytes
+            progress?.completedUnitCount = Int64(completed)
+
             guard case .status(let status) = result else {
                 throw SFTPError.invalidResponse
             }
