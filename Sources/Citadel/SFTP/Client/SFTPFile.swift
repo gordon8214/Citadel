@@ -207,15 +207,12 @@ public final class SFTPFile {
 
         let sliceLength = chunkSize // https://github.com/apple/swift-nio-ssh/issues/99
 
-        // TODO: This loop may require an autoreleasepool.
-
         // Load partial file.
         while offset < totalSize {
 
             // Load the source file in chunks of size `maxReadBytes`.
             guard let data = loadDataFromFile(url: fileURL, startOffset: UInt64(offset), endOffset: UInt64(offset + UInt64(maxReadBytes))) else { throw SFTPError.sourceFileMissing }
 
-            // TODO: Does this copy the file in memory?
             var dataBuffer = ByteBuffer(data: data)
 
             while dataBuffer.readableBytes > 0, let slice = dataBuffer.readSlice(length: Swift.min(sliceLength, dataBuffer.readableBytes)) {
