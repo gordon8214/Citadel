@@ -208,8 +208,6 @@ public final class SFTPFile {
 
         // TODO: This loop may require an autoreleasepool.
 
-        var remainingBytes = totalSize
-
         // Load partial file.
         while offset < totalSize {
 
@@ -225,11 +223,8 @@ public final class SFTPFile {
                     handle: self.handle, offset: offset + UInt64(dataBuffer.readerIndex) - UInt64(slice.readableBytes), data: slice
                 )))
 
-                // FIXME: Math is wrong for calculating completion
                 // Update progress.
-                remainingBytes -= UInt64(( slice.capacity - slice.readableBytes ))
-
-                let completed = totalSize - remainingBytes
+                let completed = (Int(offset) + dataBuffer.readerIndex - slice.readableBytes)
                 progress?.completedUnitCount = Int64(completed)
 
                 guard case .status(let status) = result else {
