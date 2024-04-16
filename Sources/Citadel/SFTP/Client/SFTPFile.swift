@@ -201,6 +201,7 @@ public final class SFTPFile {
         // Get file size.
         guard let totalSize = fileSize(forUrl: fileURL) else { throw SFTPError.sourceFileMissing }
         progress?.totalUnitCount = Int64(totalSize)
+        progress?.completedUnitCount = 0
 
         var offset = offset
 
