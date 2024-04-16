@@ -235,12 +235,13 @@ public final class SFTPFile {
                     throw SFTPError.errorStatus(status)
                 }
 
-                self.logger.debug("SFTP wrote \(slice.readableBytes) @ \(Int(offset) + dataBuffer.readerIndex - slice.readableBytes) to file \(self.handle.sftpHandleDebugDescription)")
+                self.logger.debug("SFTP wrote \(slice.readableBytes) @ \(completed) to file \(self.handle.sftpHandleDebugDescription)")
             }
             
             offset += maxReadBytes
         }
 
+        progress?.completedUnitCount = Int64(totalSize)
 
         self.logger.debug("SFTP finished writing \(totalSize) bytes @ \(offset) to file \(self.handle.sftpHandleDebugDescription)")
     }
