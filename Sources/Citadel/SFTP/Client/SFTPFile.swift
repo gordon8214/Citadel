@@ -190,13 +190,12 @@ public final class SFTPFile {
     /// ignored if the file was opened with the `.append` flag.
     /// - Parameters:
     ///   - data: The data to write to disk.
-    ///   - offset: The offset to start reading the data at.
     ///   - progress: A progress object that will be updated as the file is uploaded.
     ///   - chunkSize: The size in bytes of each chunk of data. Larger chunks will improve performance with large files.
     ///   - maxReadBytes: The maximum number of bytes from the source file to read into memory at once.
     ///   - fileURL: The URL of the file to upload.
     ///   - controller: A controller used to control the state of the upload.
-    public func write(_ fileURL: URL, at offset: UInt64 = 0, controller: UploadController, progress: Progress? = nil, chunkSize: Int = 32_000, maxReadBytes: UInt64) async throws {
+    public func write(_ fileURL: URL, controller: UploadController, progress: Progress? = nil, chunkSize: Int = 32_000, maxReadBytes: UInt64) async throws {
         guard self.isActive else { throw SFTPError.fileHandleInvalid }
         guard FileManager.default.fileExists(atPath: fileURL.path) else { throw SFTPError.sourceFileMissing }
 
@@ -205,12 +204,10 @@ public final class SFTPFile {
         progress?.totalUnitCount = Int64(totalSize)
         progress?.completedUnitCount = 0
 
-        var offset = offset
-
         let sliceLength = chunkSize // https://github.com/apple/swift-nio-ssh/issues/99
 
         // Load partial file.
-        while offset < totalSize {
+        while controller.offset < totalSize {
 
             guard !controller.stopUpload else {
                 print("Upload halt requested!")
@@ -218,18 +215,18 @@ public final class SFTPFile {
             }
 
             // Load the source file in chunks of size `maxReadBytes`.
-            guard let data = loadDataFromFile(url: fileURL, startOffset: UInt64(offset), endOffset: UInt64(offset + UInt64(maxReadBytes))) else { throw SFTPError.sourceFileMissing }
+            guard let data = loadDataFromFile(url: fileURL, startOffset: controller.offset, endOffset: controller.offset + UInt64(maxReadBytes)) else { throw SFTPError.sourceFileMissing }
 
             var dataBuffer = ByteBuffer(data: data)
 
             while dataBuffer.readableBytes > 0, let slice = dataBuffer.readSlice(length: Swift.min(sliceLength, dataBuffer.readableBytes)) {
                 let result = try await self.client.sendRequest(.write(.init(
                     requestId: self.client.allocateRequestId(),
-                    handle: self.handle, offset: offset + UInt64(dataBuffer.readerIndex) - UInt64(slice.readableBytes), data: slice
+                    handle: self.handle, offset: controller.offset + UInt64(dataBuffer.readerIndex) - UInt64(slice.readableBytes), data: slice
                 )))
 
                 // Update progress.
-                let completed = (Int(offset) + dataBuffer.readerIndex - slice.readableBytes)
+                let completed = (Int(controller.offset) + dataBuffer.readerIndex - slice.readableBytes)
                 progress?.completedUnitCount = Int64(completed)
 
                 guard case .status(let status) = result else {
@@ -243,12 +240,12 @@ public final class SFTPFile {
                 self.logger.debug("SFTP wrote \(slice.readableBytes) @ \(completed) to file \(self.handle.sftpHandleDebugDescription)")
             }
             
-            offset += maxReadBytes
+            controller.offset += maxReadBytes
         }
 
         progress?.completedUnitCount = Int64(totalSize)
 
-        self.logger.debug("SFTP finished writing \(totalSize) bytes @ \(offset) to file \(self.handle.sftpHandleDebugDescription)")
+        self.logger.debug("SFTP finished writing \(totalSize) bytes @ \(controller.offset) to file \(self.handle.sftpHandleDebugDescription)")
         controller.uploadComplete = true
     }
 
@@ -302,11 +299,19 @@ public final class UploadController {
     public var stopUpload: Bool
 
     /// Indicates the current upload is complete.
-    public var uploadComplete: Bool
+    public var uploadComplete: Bool {
+        didSet {
+            offset = 0
+        }
+    }
+
+    // The offset of the last uploaded byte in the file.
+    public var offset: UInt64
 
     // Explicit init required to avoid internal protection level.
     public init() {
         self.stopUpload = false
         self.uploadComplete = false
+        self.offset = 0
     }
 }
