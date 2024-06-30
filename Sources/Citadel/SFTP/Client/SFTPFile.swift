@@ -249,6 +249,7 @@ public final class SFTPFile {
         progress?.completedUnitCount = Int64(totalSize)
 
         self.logger.debug("SFTP finished writing \(totalSize) bytes @ \(offset) to file \(self.handle.sftpHandleDebugDescription)")
+        controller.uploadComplete = true
     }
 
     /// Close the file. No further operations may take place on the file after it is closed. A file _must_ be closed
@@ -300,8 +301,12 @@ public final class UploadController {
     /// Setting this will stop an upload that is in-progress.
     public var stopUpload: Bool
 
+    /// Indicates the current upload is complete.
+    public var uploadComplete: Bool
+
     // Explicit init required to avoid internal protection level.
-    public init(stopUpload: Bool = false) {
-        self.stopUpload = stopUpload
+    public init() {
+        self.stopUpload = false
+        self.uploadComplete = false
     }
 }
