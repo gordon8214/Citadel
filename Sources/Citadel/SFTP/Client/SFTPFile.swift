@@ -194,7 +194,9 @@ public final class SFTPFile {
     ///   - progress: A progress object that will be updated as the file is uploaded.
     ///   - chunkSize: The size in bytes of each chunk of data. Larger chunks will improve performance with large files.
     ///   - maxReadBytes: The maximum number of bytes from the source file to read into memory at once.
-    public func write(_ fileURL: URL, at offset: UInt64 = 0, progress: Progress? = nil, chunkSize: Int = 32_000, maxReadBytes: UInt64) async throws {
+    ///   - fileURL: The URL of the file to upload.
+    ///   - controller: A controller used to control the state of the upload.
+    public func write(_ fileURL: URL, at offset: UInt64 = 0, controller: UploadController, progress: Progress? = nil, chunkSize: Int = 32_000, maxReadBytes: UInt64) async throws {
         guard self.isActive else { throw SFTPError.fileHandleInvalid }
         guard FileManager.default.fileExists(atPath: fileURL.path) else { throw SFTPError.sourceFileMissing }
 
@@ -209,6 +211,11 @@ public final class SFTPFile {
 
         // Load partial file.
         while offset < totalSize {
+
+            guard !controller.stopUpload else {
+                print("Upload halt requested!")
+                return
+            }
 
             // Load the source file in chunks of size `maxReadBytes`.
             guard let data = loadDataFromFile(url: fileURL, startOffset: UInt64(offset), endOffset: UInt64(offset + UInt64(maxReadBytes))) else { throw SFTPError.sourceFileMissing }
@@ -285,5 +292,16 @@ extension ByteBuffer {
     internal var sftpHandleDebugDescription: String {
         // TODO: This is an appallingly ineffecient way to do a byte-to-hex conversion.
         return self.readableBytesView.flatMap { [Int($0 >> 8), Int($0 & 0x0f)] }.map { ["0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"][$0] }.joined()
+    }
+}
+
+/// Controls the status of an upload in progress.
+public final class UploadController {
+    /// Setting this will stop an upload that is in-progress.
+    public var stopUpload: Bool
+
+    // Explicit init required to avoid internal protection level.
+    public init(stopUpload: Bool = false) {
+        self.stopUpload = stopUpload
     }
 }
