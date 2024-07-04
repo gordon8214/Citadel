@@ -195,9 +195,11 @@ public final class SFTPFile {
     ///   - maxReadBytes: The maximum number of bytes from the source file to read into memory at once.
     ///   - fileURL: The URL of the file to upload.
     ///   - controller: A controller used to control the state of the upload.
-    public func write(_ fileURL: URL, controller: UploadController, progress: Progress? = nil, chunkSize: Int = 32_000, maxReadBytes: UInt64) async throws {
+    public func write(_ fileURL: URL, controller: UploadController, offset: UInt64 = 0, progress: Progress? = nil, chunkSize: Int = 32_000, maxReadBytes: UInt64) async throws {
         guard self.isActive else { throw SFTPError.fileHandleInvalid }
         guard FileManager.default.fileExists(atPath: fileURL.path) else { throw SFTPError.sourceFileMissing }
+
+        var offset: UInt64 = offset
 
         // Get file size.
         guard let totalSize = fileSize(forUrl: fileURL) else { throw SFTPError.sourceFileMissing }
@@ -207,26 +209,29 @@ public final class SFTPFile {
         let sliceLength = chunkSize // https://github.com/apple/swift-nio-ssh/issues/99
 
         // Load partial file.
-        while controller.offset < totalSize {
-
-            guard !controller.stopUpload else {
-                print("Upload halt requested!")
-                return
-            }
+        while offset < totalSize {
+            print("Loading from offset \(offset) to \(offset + UInt64(maxReadBytes)))…")
 
             // Load the source file in chunks of size `maxReadBytes`.
-            guard let data = loadDataFromFile(url: fileURL, startOffset: controller.offset, endOffset: controller.offset + UInt64(maxReadBytes)) else { throw SFTPError.sourceFileMissing }
+            guard let data = loadDataFromFile(url: fileURL, startOffset: offset, endOffset: offset + UInt64(maxReadBytes)) else { throw SFTPError.sourceFileMissing }
 
             var dataBuffer = ByteBuffer(data: data)
 
             while dataBuffer.readableBytes > 0, let slice = dataBuffer.readSlice(length: Swift.min(sliceLength, dataBuffer.readableBytes)) {
+
+                // Stop upload if requested.
+                guard !controller.stopUpload else {
+                    print("Upload halt requested!")
+                    return
+                }
+
                 let result = try await self.client.sendRequest(.write(.init(
                     requestId: self.client.allocateRequestId(),
-                    handle: self.handle, offset: controller.offset + UInt64(dataBuffer.readerIndex) - UInt64(slice.readableBytes), data: slice
+                    handle: self.handle, offset: offset + UInt64(dataBuffer.readerIndex) - UInt64(slice.readableBytes), data: slice
                 )))
 
                 // Update progress.
-                let completed = (Int(controller.offset) + dataBuffer.readerIndex - slice.readableBytes)
+                let completed = (Int(offset) + dataBuffer.readerIndex - slice.readableBytes)
                 progress?.completedUnitCount = Int64(completed)
 
                 guard case .status(let status) = result else {
@@ -240,12 +245,12 @@ public final class SFTPFile {
                 self.logger.debug("SFTP wrote \(slice.readableBytes) @ \(completed) to file \(self.handle.sftpHandleDebugDescription)")
             }
             
-            controller.offset += maxReadBytes
+           offset += maxReadBytes
         }
 
         progress?.completedUnitCount = Int64(totalSize)
 
-        self.logger.debug("SFTP finished writing \(totalSize) bytes @ \(controller.offset) to file \(self.handle.sftpHandleDebugDescription)")
+        self.logger.debug("SFTP finished writing \(totalSize) bytes @ \(offset) to file \(self.handle.sftpHandleDebugDescription)")
         controller.uploadComplete = true
     }
 
@@ -294,24 +299,29 @@ extension ByteBuffer {
 }
 
 /// Controls the status of an upload in progress.
-public final class UploadController {
+public final class UploadController: Codable, Equatable {
+    // Equatable conformance.
+    public static func == (lhs: UploadController, rhs: UploadController) -> Bool {
+        guard lhs.uploadComplete == rhs.uploadComplete else { return false }
+        guard lhs.stopUpload == rhs.stopUpload else { return false }
+        guard lhs.currentlyUploading == rhs.currentlyUploading else { return false }
+
+        return true
+    }
+    
     /// Setting this will stop an upload that is in-progress.
     public var stopUpload: Bool
 
     /// Indicates the current upload is complete.
-    public var uploadComplete: Bool {
-        didSet {
-            offset = 0
-        }
-    }
+    public var uploadComplete: Bool
 
-    // The offset of the last uploaded byte in the file.
-    public var offset: UInt64
+    /// Indicates an active upload.
+    public var currentlyUploading: Bool
 
     // Explicit init required to avoid internal protection level.
     public init() {
         self.stopUpload = false
         self.uploadComplete = false
-        self.offset = 0
+        self.currentlyUploading = false
     }
 }
